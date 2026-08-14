@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Traçabilité du produit — résultat</title>
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="brand-row">
+    <a class="brand-link" href="index.html">
+      <div class="brand-mark">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 2L3 6.5V12c0 5.2 3.8 9.6 9 11 5.2-1.4 9-5.8 9-11V6.5L12 2Z" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/>
+          <path d="M8.5 12.2l2.4 2.4 4.6-4.8" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div>
+        <h1>Traçabilité du produit</h1>
+        <div class="subtitle">Vérification directe sur la blockchain — aucune inscription requise.</div>
+      </div>
+    </a>
+  </div>
+
+  <a class="lien-retour" href="index.html">← Vérifier un autre lot</a>
+
+  <div class="error-note" id="lookupError" style="display:none;"></div>
+
+  <div class="section" id="verdictSection" style="display:none;">
+    <div class="result-grid">
+      <div class="verdict-area" id="verdictArea">
+        <svg class="seal" id="sealSvg" viewBox="0 0 120 120"></svg>
+        <div class="verdict-details" id="verdictDetails"></div>
+      </div>
+      <div class="qr-box" id="qrSection" style="display:none;">
+        <div id="qrcode"></div>
+        <div class="qr-caption">Scanner pour partager ce lot</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section" id="timelineSection" style="display:none;">
+    <div class="section-title">Parcours du produit</div>
+    <div class="section-hint">Production → Abattage → Processing → Retailing</div>
+    <div class="timeline-scroll">
+      <div class="timeline-h" id="timelineH">
+        <div class="timeline-track"></div>
+        <div class="timeline-progress" id="timelineProgress"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>Projet de Mastère (MRIR) — Traçabilité bœuf sécurisée par IA et blockchain multi-acteurs</footer>
+</div>
+
+<script src="app.js"></script>
+<script>
+// Point d'entree specifique a lot.html : lit ?lot=... dans l'URL et lance
+// la consultation. Si aucun identifiant n'est present, renvoie vers
+// index.html plutot que d'afficher une page vide.
+(function initLotPage(){
+  const params = new URLSearchParams(location.search);
+  const lotId = params.get('lot');
+  if(!lotId){
+    window.location.replace('index.html');
+    return;
+  }
+  verifierLot(lotId);
+})();
+</script>
+</body>
+</html>
