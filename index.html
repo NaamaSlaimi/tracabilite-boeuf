@@ -120,6 +120,13 @@
   .step-facts b{ color:var(--color-muted); font-weight:600; margin-right:4px; }
   .step-note{ font-size:0.68rem; color:var(--color-muted); font-style:italic; margin-top:5px; }
 
+  #nouvelleRecherche{ text-align:center; }
+  #nouvelleRechercheBtn{
+    background:transparent; color:var(--color-blue); font-size:0.8rem;
+    padding:4px 0; text-decoration:underline; border:none; cursor:pointer;
+  }
+  #nouvelleRechercheBtn:hover{ color: var(--color-blue-dark); background:transparent; }
+
   footer{ text-align:center; font-size:0.7rem; color:var(--color-muted); margin-top:4px; }
 
   @media (max-width: 620px){
@@ -146,7 +153,7 @@
     </div>
   </div>
 
-  <div class="section">
+  <div class="section" id="searchSection">
     <div class="row">
       <div>
         <label for="lotIdInput">Identifiant du lot (imprimé sur l'étiquette)</label>
@@ -181,6 +188,10 @@
         <div class="timeline-progress" id="timelineProgress"></div>
       </div>
     </div>
+  </div>
+
+  <div id="nouvelleRecherche" style="display:none;">
+    <button id="nouvelleRechercheBtn">← Vérifier un autre lot</button>
   </div>
 
   <footer>Projet de Mastère (MRIR) — Traçabilité bœuf sécurisée par IA et blockchain multi-acteurs</footer>
@@ -233,17 +244,21 @@ async function fetchFromIPFS(cid){
   if(String(cid).startsWith("bafklocal")){
     throw new Error("Ce lot a été soumis en mode local (IPFS_MODE=local) : son contenu n'est pas publié sur le réseau IPFS public.");
   }
-  let derniereErreur = null;
-  for(const base of IPFS_GATEWAYS){
-    try{
-      console.log(`[IPFS] tentative : ${base}/${cid}`);
-      const res = await fetch(`${base}/${cid}`, { signal: AbortSignal.timeout(9000) });
-      if(!res.ok){ derniereErreur = new Error(`HTTP ${res.status}`); console.warn(`[IPFS] ${base} -> HTTP ${res.status}`); continue; }
-      console.log(`[IPFS] succès via ${base}`);
-      return await res.json();
-    }catch(e){ derniereErreur = e; console.warn(`[IPFS] ${base} -> ${e.message}`); }
+  const tentatives = IPFS_GATEWAYS.map(async (base) => {
+    console.log(`[IPFS] tentative : ${base}/${cid}`);
+    const res = await fetch(`${base}/${cid}`, { signal: AbortSignal.timeout(3000) });
+    if(!res.ok){ throw new Error(`HTTP ${res.status} (${base})`); }
+    console.log(`[IPFS] succès via ${base}`);
+    return await res.json();
+  });
+  try{
+    // Promise.any : la premiere gateway qui repond avec succes suffit,
+    // on n'attend pas les 4 sequentiellement (gain : minutes -> secondes).
+    return await Promise.any(tentatives);
+  }catch(aggregateError){
+    const messages = (aggregateError.errors || [aggregateError]).map(e => e.message).join(' | ');
+    throw new Error(messages || "Impossible de joindre une gateway IPFS.");
   }
-  throw derniereErreur || new Error("Impossible de joindre une gateway IPFS.");
 }
 
 async function recalculerHash(donnees){
@@ -371,6 +386,7 @@ async function verifierLot(lotId){
   $('verdictSection').style.display = 'none';
   $('timelineSection').style.display = 'none';
   $('qrSection').style.display = 'none';
+  $('nouvelleRecherche').style.display = 'none';
 
   // reset any previously rendered steps, keep the track/progress bars
   $('timelineH').querySelectorAll('.step').forEach(el => el.remove());
@@ -384,40 +400,53 @@ async function verifierLot(lotId){
   }
 
   try{
+    console.time('[CHRONO] total');
     const c = getContract();
-    const etape = Number(await c.etapeActuelle(lotId));
 
-    if(etape === 0){
+    console.time('[CHRONO] blockchain (consulterLot + historique)');
+    // AJOUT perf : consulterLot() ET nombreEvenementsHistorique() partent
+    // en meme temps (aucun des deux ne depend de l'autre), au lieu
+    // d'attendre le premier avant de lancer le second. etapeActuelle()
+    // est retire : consulterLot() renvoie deja "etape" comme premier
+    // champ, un appel reseau en moins.
+    let lot, nbEvenements;
+    try{
+      [lot, nbEvenements] = await Promise.all([
+        c.consulterLot(lotId),
+        c.nombreEvenementsHistorique(lotId)
+      ]);
+    }catch(e){
       $('lookupError').textContent = `Aucun lot trouvé pour l'identifiant "${lotId}".`;
       $('lookupError').style.display = 'block';
       return;
     }
+    const etape = Number(lot.etape);
+    nbEvenements = Number(nbEvenements);
 
-    const lot = await c.consulterLot(lotId);
-
-    // --- Historique complet : recupere le CID de chaque etape franchie ---
-    const nbEvenements = Number(await c.nombreEvenementsHistorique(lotId));
-    const historique = [];
-    for(let i = 0; i < nbEvenements; i++){
-      historique.push(await c.evenementHistorique(lotId, i));
-    }
+    // AJOUT perf : les N appels evenementHistorique() partent tous en
+    // meme temps, plutot que l'un apres l'autre.
+    const historique = await Promise.all(
+      Array.from({ length: nbEvenements }, (_, i) => c.evenementHistorique(lotId, i))
+    );
+    console.timeEnd('[CHRONO] blockchain (consulterLot + historique)');
 
     // Affiche la timeline tout de suite (sans les details produit, le temps de charger IPFS)
     renderTimeline(lot, historique, null);
 
-    // Recupere le contenu IPFS de CHAQUE etape une seule fois : reutilise a
-    // la fois pour enrichir la timeline (infos produit par etape) et pour
-    // recalculer le hash anti-fraude plus bas.
-    const donneesParEtape = [];
-    for(const ev of historique){
+    // Recupere le contenu IPFS de CHAQUE etape EN PARALLELE (pas l'une apres
+    // l'autre) : reutilise a la fois pour enrichir la timeline (infos
+    // produit par etape) et pour recalculer le hash anti-fraude plus bas.
+    console.time('[CHRONO] IPFS (toutes les etapes en parallele)');
+    const donneesParEtape = await Promise.all(historique.map(async (ev) => {
       try{
         const contenu = await fetchFromIPFS(ev.cidIPFS);
-        donneesParEtape.push({ contenu, erreur: null });
+        return { contenu, erreur: null };
       }catch(e){
-        donneesParEtape.push({ contenu: null, erreur: e.message });
+        return { contenu: null, erreur: e.message };
       }
-    }
+    }));
     renderTimeline(lot, historique, donneesParEtape);
+    console.timeEnd('[CHRONO] IPFS (toutes les etapes en parallele)');
 
     // --- Verdict d'integrite (necessite l'etape Processing atteinte) ---
     const detailsEl = $('verdictDetails');
@@ -466,7 +495,15 @@ async function verifierLot(lotId){
       }
     }
 
-    renderQR(lotId);
+    try{
+      renderQR(lotId);
+    }catch(qrError){
+      console.warn('[QR] Génération du QR code impossible :', qrError.message);
+      $('qrSection').style.display = 'none';
+    }
+    $('searchSection').style.display = 'none';
+    $('nouvelleRecherche').style.display = 'block';
+    console.timeEnd('[CHRONO] total');
   }catch(e){
     $('lookupError').textContent = "Erreur : " + e.message;
     $('lookupError').style.display = 'block';
@@ -478,6 +515,15 @@ $('lookupBtn').addEventListener('click', () => {
 });
 $('lotIdInput').addEventListener('keydown', (e) => {
   if(e.key === 'Enter') verifierLot($('lotIdInput').value.trim());
+});
+
+$('nouvelleRechercheBtn').addEventListener('click', () => {
+  $('searchSection').style.display = 'block';
+  $('nouvelleRecherche').style.display = 'none';
+  $('verdictSection').style.display = 'none';
+  $('timelineSection').style.display = 'none';
+  $('lotIdInput').value = '';
+  $('lotIdInput').focus();
 });
 
 // --- Auto-chargement si la page est ouverte via un QR code (?lot=...) ---
