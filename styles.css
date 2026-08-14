@@ -118,11 +118,6 @@ button:disabled{ background:#CBD3E1; cursor:not-allowed; }
   padding:4px 0; text-decoration:underline; border:none; cursor:pointer;
 }
 #nouvelleRechercheBtn:hover{ color: var(--color-blue-dark); background:transparent; }
-a.lien-retour{
-  display:inline-block; color: var(--color-blue); font-size:0.8rem;
-  text-decoration:underline; margin-bottom:4px;
-}
-a.lien-retour:hover{ color: var(--color-blue-dark); }
 
 footer{ text-align:center; font-size:0.7rem; color:var(--color-muted); margin-top:4px; }
 
