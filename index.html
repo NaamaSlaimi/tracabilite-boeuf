@@ -190,11 +190,9 @@
     </div>
   </div>
 
-  <div id="nouvelleRecherche" style="display:none;">
-    <button id="nouvelleRechercheBtn">← Vérifier un autre lot</button>
-  </div>
+  
 
-  <footer>Projet de Mastère (MRIR) — Traçabilité bœuf sécurisée par IA et blockchain multi-acteurs</footer>
+  
 </div>
 
 <script>
@@ -374,14 +372,18 @@ function renderTimeline(lot, historique, donneesParEtape){
   $('timelineSection').style.display = 'block';
 }
 
+function urlDuLot(lotId){
+  return `${location.origin}${location.pathname}?lot=${encodeURIComponent(lotId)}`;
+}
+
 function renderQR(lotId){
   $('qrcode').innerHTML = '';
-  const url = `${location.origin}${location.pathname}?lot=${encodeURIComponent(lotId)}`;
+  const url = urlDuLot(lotId);
   new QRCode($('qrcode'), { text: url, width: 70, height: 70, colorDark: '#10182B', colorLight: '#ffffff' });
   $('qrSection').style.display = 'flex';
 }
 
-async function verifierLot(lotId){
+async function verifierLot(lotId, { miseAJourUrl = true } = {}){
   $('lookupError').style.display = 'none';
   $('verdictSection').style.display = 'none';
   $('timelineSection').style.display = 'none';
@@ -501,6 +503,17 @@ async function verifierLot(lotId){
       console.warn('[QR] Génération du QR code impossible :', qrError.message);
       $('qrSection').style.display = 'none';
     }
+
+    // AJOUT : met a jour la barre d'adresse pour qu'elle soit propre a ce
+    // lot (partageable/bookmarkable). Uniquement pour une recherche lancee
+    // par l'utilisateur (formulaire) ; pas lors d'un chargement initial via
+    // ?lot=... deja present dans l'URL, ni lors d'une navigation
+    // precedent/suivant, ou l'URL est deja correcte et geree par le
+    // navigateur lui-meme.
+    if(miseAJourUrl && window.history && window.history.pushState){
+      window.history.pushState({ lot: lotId }, '', urlDuLot(lotId));
+    }
+
     $('searchSection').style.display = 'none';
     $('nouvelleRecherche').style.display = 'block';
     console.timeEnd('[CHRONO] total');
@@ -524,17 +537,42 @@ $('nouvelleRechercheBtn').addEventListener('click', () => {
   $('timelineSection').style.display = 'none';
   $('lotIdInput').value = '';
   $('lotIdInput').focus();
+
+  // AJOUT : retire le "?lot=..." de l'URL, on revient a l'ecran de recherche
+  if(window.history && window.history.pushState){
+    window.history.pushState({}, '', location.pathname);
+  }
 });
 
 // --- Auto-chargement si la page est ouverte via un QR code (?lot=...) ---
-(function initFromUrl(){
+function chargerDepuisUrl(){
   const params = new URLSearchParams(location.search);
   const lot = params.get('lot');
   if(lot){
     $('lotIdInput').value = lot;
-    verifierLot(lot);
+    verifierLot(lot, { miseAJourUrl: false });
   }
-})();
+}
+chargerDepuisUrl();
+
+// AJOUT : reagit aux boutons precedent/suivant du navigateur, pour que
+// l'historique de navigation (plusieurs lots consultes a la suite) se
+// comporte normalement, comme sur un vrai site multi-pages. Le navigateur
+// gere deja l'URL dans ce cas, on se contente de resynchroniser l'affichage.
+window.addEventListener('popstate', () => {
+  const params = new URLSearchParams(location.search);
+  const lot = params.get('lot');
+  if(lot){
+    $('lotIdInput').value = lot;
+    verifierLot(lot, { miseAJourUrl: false });
+  }else{
+    $('searchSection').style.display = 'block';
+    $('nouvelleRecherche').style.display = 'none';
+    $('verdictSection').style.display = 'none';
+    $('timelineSection').style.display = 'none';
+    $('lotIdInput').value = '';
+  }
+});
 </script>
 </body>
 </html>
